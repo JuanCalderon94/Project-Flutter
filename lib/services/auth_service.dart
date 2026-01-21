@@ -1,74 +1,183 @@
 import 'dart:convert';
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import '../core/config.dart';
 
 class AuthService {
   static final AuthService _instance = AuthService._internal();
   factory AuthService() => _instance;
   AuthService._internal();
 
-  static const String _usersKey = 'users';
-  static const String _currentUserKey = 'current_user';
-  static const String baseUrl = 'http://127.0.0.1:8000/api';
+  static const String _tokenKey = 'auth_token';
+  static const String _userKey = 'user_data';
+  static const String _refreshTokenKey = 'refresh_token';
 
-  /// Retrieves the map of stored users (email -> {username, password}).
-  Future<Map<String, Map<String, String>>> _getUsers() async {
-    final prefs = await SharedPreferences.getInstance();
-    final jsonString = prefs.getString(_usersKey);
-    if (jsonString == null) return {};
-    final Map<String, dynamic> decoded = json.decode(jsonString);
-    // Ensure proper typing
-    return decoded.map(
-      (email, data) => MapEntry(email, Map<String, String>.from(data)),
-    );
-  }
-
-  /// Persists the users map.
-  Future<void> _saveUsers(Map<String, Map<String, String>> users) async {
-    final prefs = await SharedPreferences.getInstance();
-    final jsonString = json.encode(users);
-    await prefs.setString(_usersKey, jsonString);
-  }
-
-  /// Sign up a new user. Returns true if successful, false if email already exists.
-  Future<bool> signUp({
+  /// Sign up a new user with Laravel backend
+  Future<Map<String, dynamic>> signUp({
     required String username,
     required String email,
     required String password,
+    required String passwordConfirm,
   }) async {
-    final users = await _getUsers();
-    if (users.containsKey(email)) {
-      return false; // email already registered
+    try {
+      final baseUrl = kApiBaseUrl;
+      final url = Uri.parse('$baseUrl/register');
+
+      final response = await http.post(
+        url,
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: jsonEncode({
+          'name': username,
+          'email': email,
+          'password': password,
+          'password_confirmation': passwordConfirm,
+        }),
+      );
+
+      if (response.statusCode == 201 || response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+
+        // Guardar token si se retorna
+        if (data['token'] != null) {
+          await _saveToken(data['token']);
+        }
+        if (data['refresh_token'] != null) {
+          await _saveRefreshToken(data['refresh_token']);
+        }
+
+        return {
+          'success': true,
+          'message': data['message'] ?? 'Registro exitoso',
+          'user': data['user'],
+        };
+      } else {
+        final errorData = jsonDecode(response.body);
+        return {
+          'success': false,
+          'message': errorData['message'] ?? 'Error en el registro',
+          'errors': errorData['errors'],
+        };
+      }
+    } catch (e) {
+      return {'success': false, 'message': 'Error de conexión: $e'};
     }
-    users[email] = {'username': username, 'password': password};
-    await _saveUsers(users);
-    // Auto‑login after sign‑up
-    await login(email: email, password: password);
-    return true;
   }
 
-  /// Login with email (or username) and password. Returns true on success.
-  Future<bool> login({required String email, required String password}) async {
-    final users = await _getUsers();
-    final user = users[email];
-    if (user == null) return false;
-    if (user['password'] != password) return false;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_currentUserKey, email);
-    return true;
+  /// Login with Laravel backend
+  Future<Map<String, dynamic>> login({
+    required String email,
+    required String password,
+  }) async {
+    try {
+      final baseUrl = kApiBaseUrl;
+      final url = Uri.parse('$baseUrl/login');
+
+      final response = await http.post(
+        url,
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: jsonEncode({'email': email, 'password': password}),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+
+        // Guardar token y datos del usuario
+        if (data['token'] != null) {
+          await _saveToken(data['token']);
+        }
+        if (data['user'] != null) {
+          await _saveUser(data['user']);
+        }
+        if (data['refresh_token'] != null) {
+          await _saveRefreshToken(data['refresh_token']);
+        }
+
+        return {
+          'success': true,
+          'message': 'Login exitoso',
+          'user': data['user'],
+          'token': data['token'],
+        };
+      } else {
+        final errorData = jsonDecode(response.body);
+        return {
+          'success': false,
+          'message': errorData['message'] ?? 'Credenciales inválidas',
+        };
+      }
+    } catch (e) {
+      return {'success': false, 'message': 'Error de conexión: $e'};
+    }
   }
 
-  /// Logout the current user.
+  /// Logout the current user
   Future<void> logout() async {
+    try {
+      final baseUrl = kApiBaseUrl;
+      final token = await getToken();
+
+      if (token != null) {
+        await http.post(
+          Uri.parse('$baseUrl/logout'),
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'Authorization': 'Bearer $token',
+          },
+        );
+      }
+    } catch (e) {
+      print('Error durante logout: $e');
+    }
+
+    // Limpiar datos locales en cualquier caso
     final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_currentUserKey);
+    await prefs.remove(_tokenKey);
+    await prefs.remove(_userKey);
+    await prefs.remove(_refreshTokenKey);
   }
 
-  /// Returns the currently logged‑in user's data or null.
-  Future<Map<String, String>?> getCurrentUser() async {
+  /// Get the current authentication token
+  Future<String?> getToken() async {
     final prefs = await SharedPreferences.getInstance();
-    final email = prefs.getString(_currentUserKey);
-    if (email == null) return null;
-    final users = await _getUsers();
-    return users[email];
+    return prefs.getString(_tokenKey);
+  }
+
+  /// Get the current logged-in user data
+  Future<Map<String, dynamic>?> getCurrentUser() async {
+    final prefs = await SharedPreferences.getInstance();
+    final userData = prefs.getString(_userKey);
+    if (userData == null) return null;
+    return jsonDecode(userData);
+  }
+
+  /// Check if user is logged in
+  Future<bool> isLoggedIn() async {
+    final token = await getToken();
+    return token != null && token.isNotEmpty;
+  }
+
+  /// Save token to local storage
+  Future<void> _saveToken(String token) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_tokenKey, token);
+  }
+
+  /// Save refresh token to local storage
+  Future<void> _saveRefreshToken(String refreshToken) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_refreshTokenKey, refreshToken);
+  }
+
+  /// Save user data to local storage
+  Future<void> _saveUser(Map<String, dynamic> userData) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_userKey, jsonEncode(userData));
   }
 }

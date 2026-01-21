@@ -8,18 +8,9 @@ String get kApiBaseUrl {
     return envUrl;
   }
 
-  // Detectar plataforma automáticamente
-  // Nota: La base URL ya incluye /api según auth_service.dart
-  if (kIsWeb) {
-    // Para web, usar localhost con /api
-    return 'http://127.0.0.1:8000/api';
-  } else if (Platform.isAndroid) {
-    // Para emulador Android, usar 10.0.2.2 con /api
-    return 'http://10.0.2.2:8000/api';
-  } else {
-    // Para iOS simulator y otros, usar localhost con /api
-    return 'http://127.0.0.1:8000/api';
-  }
+  // Backend en Render (servidor remoto en la nube)
+  // URL: https://proyecto-backend-web-1.onrender.com
+  return 'https://proyecto-backend-web-1.onrender.com/api';
 }
 
 // Ruta del endpoint de productos

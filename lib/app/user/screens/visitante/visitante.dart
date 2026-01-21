@@ -526,19 +526,20 @@ class _SignUpScreenState extends State<SignUpScreen> {
     setState(() => _isLoading = true);
     try {
       final auth = AuthService();
-      final success = await auth.signUp(
+      final result = await auth.signUp(
         username: _usuarioController.text,
         email: _correoController.text,
         password: _passController.text,
+        passwordConfirm: _passController.text,
       );
 
-      if (!success) {
+      if (!result['success']) {
         if (mounted) {
           showDialog(
             context: context,
             builder: (_) => AlertDialog(
               title: const Text('Error'),
-              content: const Text('El correo ya está registrado.'),
+              content: Text(result['message'] ?? 'Error en el registro.'),
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(context),
@@ -554,6 +555,9 @@ class _SignUpScreenState extends State<SignUpScreen> {
       // Guardar usuario
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('current_user', _usuarioController.text);
+      if (result['token'] != null) {
+        await prefs.setString('auth_token', result['token']);
+      }
 
       // Procesar acción pendiente si existe
       final pending = prefs.getString('pending_action');
@@ -741,18 +745,18 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => _isLoading = true);
     try {
       final auth = AuthService();
-      final success = await auth.login(
+      final result = await auth.login(
         email: _correoController.text,
         password: _passController.text,
       );
 
-      if (!success) {
+      if (!result['success']) {
         if (mounted) {
           showDialog(
             context: context,
             builder: (_) => AlertDialog(
               title: const Text('Error'),
-              content: const Text('Credenciales inválidas.'),
+              content: Text(result['message'] ?? 'Credenciales inválidas.'),
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(context),
@@ -765,8 +769,11 @@ class _LoginScreenState extends State<LoginScreen> {
         return;
       }
 
-      // Guardar usuario
+      // Guardar usuario y token
       final prefs = await SharedPreferences.getInstance();
+      if (result['token'] != null) {
+        await prefs.setString('auth_token', result['token']);
+      }
       final username = prefs.getString('username') ?? _correoController.text;
       await prefs.setString('current_user', username);
 
